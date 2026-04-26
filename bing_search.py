@@ -9,7 +9,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
 # Minimum and maximum delay (in seconds) between searches
-MIN_DELAY_SECONDS = 5
+MIN_DELAY_SECONDS = 6
 MAX_DELAY_SECONDS = 12
 
 # Edge driver wait timeout
@@ -39,34 +39,44 @@ def read_file_to_list(file_path):
     
     return lines
 
-def login_to_edge_sync(driver):
+def login_to_current_user(driver):
     """
-    Launches Microsoft Edge and presses the 'Sign in to sync data' button
-    assuming credentials are saved from a previous session.
+    Ensures the browser is logged in as the current Windows user (Edge profile).
+    If Edge is started with the default profile, it should be logged in automatically.
+    This function can be extended for more advanced login if needed.
     """
+    # For most Windows setups, Edge will use the current user's profile and be logged in automatically.
+    # If not, you can add logic here to handle login, e.g., navigating to login.microsoftonline.com.
+    print("Assuming Edge is using the current Windows user profile (automatic login).")
 
+def auto_accept_cookies(driver):
+    """
+    Tries to auto-accept all cookies popups for the current page (Bing and common consent banners).
+    """
     try:
-        # Open the Edge Settings page (sync settings)
-        driver.get("edge://settings/profiles")
-
-        # Wait until the "Sign in to sync data" button is clickable
-        wait = WebDriverWait(driver, EDGE_DRIVER_TIMEOUT)
-        sign_in_button = wait.until(
-            EC.element_to_be_clickable(
-                (By.XPATH, "//button[contains(., 'Sign in to sync data')]")
-            )
-        )
-
-        # Click the button
-        sign_in_button.click()
-
-        print("Clicked 'Sign in to sync data' button successfully.")
-
+        # Try Bing's cookie accept button
+        accept_selectors = [
+            (By.ID, "bnp_btn_accept"),  # Bing
+            (By.XPATH, "//input[@id='onetrust-accept-btn-handler']"),  # OneTrust
+            (By.XPATH, "//button[contains(., 'Accept') or contains(., 'accept')]"),
+            (By.XPATH, "//button[contains(., 'Agree') or contains(., 'agree')]"),
+        ]
+        for by, selector in accept_selectors:
+            try:
+                elem = WebDriverWait(driver, 2).until(
+                    EC.element_to_be_clickable((by, selector))
+                )
+                elem.click()
+                print(f"Accepted cookies with selector: {selector}")
+                break
+            except Exception:
+                continue
     except Exception as e:
-        print("An error occurred:", e)
+        print(f"No cookie banner accepted or error: {e}")
   
 def main():
     # --- WebDriver Setup ---
+
     driver = None # Initialize driver to None
 
     try:
@@ -80,18 +90,27 @@ def main():
             print(f"Could not start Microsoft Edge WebDriver: {e_edge}")
             print("Please ensure you have msedgedriver.exe installed and configured correctly.")
             print("Download from: https://developer.microsoft.com/en-us/microsoft-edge/tools/webdriver/")
-            exit()
+            if driver:
+                driver.quit()
+            return
 
         # Read the topics from a text file
         KEYWORDS = read_file_to_list("topics.txt")
+        if not KEYWORDS:
+            print("No topics found in topics.txt. Please add topics to search.")
+            driver.quit()
+            return
         print(KEYWORDS)
 
-        # Login into Microsoft Edge with username
-        login_to_edge_sync(driver)
+        # Automatic login (current user)
+        login_to_current_user(driver)
 
         # Navigate to Bing
         print(f"Navigating to {BING_URL}...")
         driver.get(BING_URL)
+
+        # Auto-accept cookies on Bing home page
+        auto_accept_cookies(driver)
 
         # --- Loop through keywords and perform searches ---
         for i, keyword in enumerate(KEYWORDS):
@@ -115,13 +134,14 @@ def main():
                 print("Submitting search...")
                 search_box.send_keys(Keys.RETURN) # or Keys.ENTER
 
-                # Wait for search results to load (optional, but good practice)
-                # You can wait for a specific element that appears on the results page.
-                # For Bing, the search results are often within an element with id "b_results".
+                # Wait for search results to load
                 WebDriverWait(driver, EDGE_DRIVER_TIMEOUT).until(
                     EC.presence_of_element_located((By.ID, "b_results"))
                 )
                 print(f"Search results for '{keyword}' loaded.")
+
+                # Auto-accept cookies on results page (if any pop up again)
+                auto_accept_cookies(driver)
 
             except Exception as e:
                 print(f"An error occurred while searching for '{keyword}': {e}")
@@ -139,7 +159,8 @@ def main():
 
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
-
+        if driver:
+            driver.quit()
     finally:
         # --- Close the browser ---
         if driver:
